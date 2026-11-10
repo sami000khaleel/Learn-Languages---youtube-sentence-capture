@@ -88,10 +88,10 @@
   #gst-toast.warn{background:#b45309}
   #gst-overlay .gst-gear{position:absolute;top:-12px;right:-12px;width:28px;height:28px;padding:0;border-radius:50%;
     border:2px solid rgba(255,255,255,.85);background:rgba(24,24,24,.96);color:#fff;font:16px/1 Roboto,Arial,sans-serif;
-    cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .12s ease,background .12s ease;touch-action:manipulation}
+    cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;touch-action:manipulation}
   #gst-overlay:hover .gst-gear,#gst-overlay:focus-within .gst-gear,
   #gst-overlay .gst-gear:hover,#gst-overlay .gst-gear:focus-visible{opacity:1;pointer-events:auto;background:#1557b0}
-  @media (hover:none){#gst-overlay .gst-gear{opacity:1;pointer-events:auto}}
+  @media (hover:none){#gst-overlay .gst-gear{opacity:.9;pointer-events:auto}}
   #gst-menu[dir="rtl"],#gst-word[dir="rtl"]{direction:rtl;text-align:right}`;
 
   const FAILED = '\u0001failed'; // marks a translation that did not work

@@ -3,14 +3,15 @@ PROJECT BUNDLE
 ================================================================================
 Root:        C:\Users\sami\Desktop\language-sentence-trainer
 Type:        Unknown
-Generated:   2026-11-10T16:44:37.985Z
-Directories: 0 (0 not scanned)
-Files:       16 (12 read, 4 listed only)
+Generated:   2026-11-10T21:10:43.443Z
+Directories: 1 (1 not scanned)
+Files:       17 (12 read, 5 listed only)
 
 ================================================================================
 1. DIRECTORY TREE
 ================================================================================
 language-sentence-trainer/
+├── .git/  (exists, not scanned)
 ├── app.css
 ├── app.html
 ├── app.js
@@ -18,6 +19,7 @@ language-sentence-trainer/
 ├── background.js
 ├── bundler.cjs  (this script)
 ├── content.js
+├── Dual captions and sentense capture extension.zip  (binary/media file - exists, content not read)
 ├── game.js
 ├── hook.js
 ├── i18n.js
@@ -31,24 +33,26 @@ language-sentence-trainer/
 ================================================================================
 2. ALL DIRECTORIES
 ================================================================================
+.git/   (exists, not scanned)
 
 ================================================================================
 3. ALL FILES (location, size, status)
 ================================================================================
-app.css  [9.0 KB]  READ
-app.html  [678 B]  READ
-app.js  [39.2 KB]  READ
-audio.js  [3.3 KB]  READ
+app.css  [8.3 KB]  READ
+app.html  [643 B]  READ
+app.js  [40.4 KB]  READ
+audio.js  [1.9 KB]  READ
 background.js  [3.9 KB]  READ
 bundler.cjs  [8.0 KB]  SKIPPED - this script
-content.js  [37.5 KB]  READ
+content.js  [37.7 KB]  READ
+Dual captions and sentense capture extension.zip  [48.0 KB]  LISTED - binary/media file - exists, content not read
 game.js  [3.2 KB]  READ
 hook.js  [6.3 KB]  READ
-i18n.js  [12.2 KB]  READ
-icon128.png  [4.1 KB]  LISTED - binary/media file - exists, content not read
-icon16.png  [587 B]  LISTED - binary/media file - exists, content not read
-icon48.png  [1.5 KB]  LISTED - binary/media file - exists, content not read
-manifest.json  [1.2 KB]  READ
+i18n.js  [11.7 KB]  READ
+icon128.png  [552 B]  LISTED - binary/media file - exists, content not read
+icon16.png  [119 B]  LISTED - binary/media file - exists, content not read
+icon48.png  [230 B]  LISTED - binary/media file - exists, content not read
+manifest.json  [1.1 KB]  READ
 sentences.js  [11.1 KB]  READ
 store.js  [9.3 KB]  READ
 
@@ -219,18 +223,8 @@ hr { border: 0; border-top: 2px solid var(--line); margin: 1.2rem 0; }
   .de { font-size: 1.35rem; }
 }
 
-/* ---------- audio: buttons and the small player ---------- */
+/* ---------- computer-voice button ---------- */
 .row.audio { margin: .2rem 0 .6rem; }
-#dock {
-  position: fixed; inset-inline-end: 1rem; bottom: 1rem; width: min(380px, calc(100vw - 2rem)); z-index: 15;
-  background: #fff; border: 2px solid var(--line); border-radius: 16px; padding: .6rem .7rem; box-shadow: 0 8px 28px rgba(0, 0, 0, .3);
-}
-#dock[hidden] { display: none; }
-#dock iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: #000; }
-.dock-top { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-bottom: .4rem; }
-.dock-hint { font-size: .8rem; margin: .4rem 0 0; }
-body.has-dock main { padding-bottom: 16rem; }
-@media (max-width: 520px) { #dock { inset-inline: .5rem; width: auto; } }
 --- END: app.css ---
 
 --- FILE: app.html ---
@@ -248,7 +242,6 @@ body.has-dock main { padding-bottom: 16rem; }
     <nav id="tabs" role="tablist" aria-label="Sections"></nav>
   </header>
   <main id="view" tabindex="-1"></main>
-  <aside id="dock" hidden></aside>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="store.js"></script>
   <script src="i18n.js"></script>
@@ -281,6 +274,8 @@ body.has-dock main { padding-bottom: 16rem; }
     sentences: [],
     words: [],
     open: null, // the word panel that is open under a sentence
+    sentenceTranslations: new Map(), // translations cached by sentence ID + target language
+    sentenceTranslationPending: new Set(),
     mode: 'words', // practice: 'words' (card game) or 'listen' (listening game)
   };
   let game = null; // the running card game
@@ -339,6 +334,66 @@ body.has-dock main { padding-bottom: 16rem; }
     chrome.runtime
       .sendMessage({ type: 'translate', text, sl: learn(), tl: state.settings.lang })
       .then((r) => (r && r.text ? String(r.text).trim() : ''));
+
+  // A saved sentence may have been translated into a different native language.
+  // Translate it on demand and cache each target language independently.
+  function sentenceTranslationKey(s, target = state.settings.lang) {
+    return `${s.id}|${target}`;
+  }
+
+  const sentenceTranslationQueue = [];
+  let sentenceTranslationWorkers = 0;
+
+  function runSentenceTranslationQueue() {
+    while (sentenceTranslationWorkers < 4 && sentenceTranslationQueue.length) {
+      const job = sentenceTranslationQueue.shift();
+      // Drop obsolete queued work after the user changes their native language.
+      if (job.target !== state.settings.lang) {
+        state.sentenceTranslationPending.delete(job.key);
+        continue;
+      }
+      sentenceTranslationWorkers++;
+      chrome.runtime.sendMessage({
+        type: 'translate', text: job.sentence.text, sl: job.sentence.learn || 'de', tl: job.target,
+      })
+        .then(async (r) => {
+          const translated = r && r.text ? String(r.text).trim() : '';
+          if (!translated) throw new Error('Empty translation');
+          state.sentenceTranslations.set(job.key, translated);
+          // Persist the latest selected language, without allowing a stale request
+          // to overwrite a newer language choice.
+          if (state.settings.lang === job.target) {
+            job.sentence.translation = translated;
+            job.sentence.lang = job.target;
+            await Store.updateSentence(job.sentence.id, { translation: translated, lang: job.target });
+            if (state.tab === 'sentences' || (state.tab === 'practice' && state.mode === 'listen')) render();
+          }
+        })
+        .catch((e) => console.warn('[GST] sentence translation failed', e))
+        .finally(() => {
+          state.sentenceTranslationPending.delete(job.key);
+          sentenceTranslationWorkers--;
+          runSentenceTranslationQueue();
+        });
+    }
+  }
+
+  function requestSentenceTranslation(s, target) {
+    const key = sentenceTranslationKey(s, target);
+    if (state.sentenceTranslations.has(key) || state.sentenceTranslationPending.has(key)) return;
+    state.sentenceTranslationPending.add(key);
+    sentenceTranslationQueue.push({ key, sentence: s, target });
+    runSentenceTranslationQueue();
+  }
+
+  function sentenceTranslation(s) {
+    const target = state.settings.lang;
+    if (s.lang === target && s.translation) return s.translation;
+    const key = sentenceTranslationKey(s, target);
+    if (state.sentenceTranslations.has(key)) return state.sentenceTranslations.get(key);
+    requestSentenceTranslation(s, target);
+    return '…';
+  }
 
   function seg(options, current, onPick, attrName) {
     return h(
@@ -474,9 +529,8 @@ body.has-dock main { padding-bottom: 16rem; }
     const card = h('div', { class: 'card' },
       line,
       h('div', { class: 'row audio' },
-        h('button', { class: 'btn secondary small', type: 'button', title: t('audio.playTitle'), onclick: () => playOriginal(s) }, t('audio.play')),
         h('button', { class: 'btn secondary small', type: 'button', title: t('audio.voiceTitle'), onclick: () => playVoice(s) }, t('audio.voice'))),
-      s.translation ? h('p', { class: 'tr', dir: dirOf(s.lang), lang: s.lang }, s.translation) : null,
+      h('p', { class: 'tr', dir: dirOf(state.settings.lang), lang: state.settings.lang }, sentenceTranslation(s)),
       h('p', { class: 'src' },
         s.videoTitle ? `${s.videoTitle} · ` : '',
         s.url ? h('a', { href: s.url, target: '_blank', rel: 'noopener' }, t('sent.watch', { time: fmtTime(s.time) })) : null,
@@ -549,7 +603,7 @@ body.has-dock main { padding-bottom: 16rem; }
               if (!meaning) { toast(t('word.typeFirst')); input.focus(); return; }
               const res = await Store.addWord({
                 word: o.word, translation: meaning, lang: state.settings.lang, learn: learn(), difficulty: o.difficulty,
-                sentenceDe: s.text, sentenceTr: s.translation || '', videoTitle: s.videoTitle || '', url: s.url || '',
+                sentenceDe: s.text, sentenceTr: sentenceTranslation(s), videoTitle: s.videoTitle || '', url: s.url || '',
               });
               state.open = null;
               await reload();
@@ -623,7 +677,7 @@ body.has-dock main { padding-bottom: 16rem; }
     box.append(
       h('div', { class: 'field', role: 'group', 'aria-label': t('prac.modeAria') },
         seg([['words', t('prac.modeWords')], ['listen', t('prac.modeListen')]], state.mode, (m) => {
-          state.mode = m; game = null; lgame = null; closeDock(); A.stopSpeaking(); render(false);
+          state.mode = m; game = null; lgame = null; A.stopSpeaking(); render(false);
         }, 'data-mode'))
     );
     if (state.mode === 'listen') return viewListen(box);
@@ -792,34 +846,8 @@ body.has-dock main { padding-bottom: 16rem; }
     }
   });
 
-  // ---------- playing a sentence: the original (a video clip) or the computer voice ----------
-  const $dock = document.getElementById('dock'); // a small player at the bottom, outside the views so a redraw does not restart it
-
-  function closeDock() {
-    if ($dock) { $dock.hidden = true; $dock.replaceChildren(); }
-    document.body.classList.remove('has-dock');
-  }
-  function playOriginal(s) {
-    A.stopSpeaking();
-    const url = A.embedUrl(s);
-    if (!url) { toast(t('audio.noVideo')); return false; }
-    const frame = h('iframe', {
-      src: url, title: t('audio.playerAria'), allow: 'autoplay; encrypted-media; picture-in-picture',
-      allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin',
-    });
-    $dock.replaceChildren(
-      h('div', { class: 'dock-top' },
-        h('b', null, t('audio.playerAria')),
-        h('button', { class: 'btn secondary small', type: 'button', onclick: closeDock }, t('audio.stop'))),
-      frame,
-      h('p', { class: 'muted dock-hint' }, t('audio.hint'))
-    );
-    $dock.hidden = false;
-    document.body.classList.add('has-dock');
-    return true;
-  }
+  // ---------- playing a sentence with the computer voice ----------
   function playVoice(s) {
-    closeDock();
     const r = A.speak(s.text, s.learn || 'de', { rate: 1 });
     if (!r.ok) toast(r.reason === 'no-voice' ? t('audio.noVoice') : t('audio.noSpeech'));
     return r.ok;
@@ -844,8 +872,6 @@ body.has-dock main { padding-bottom: 16rem; }
       box.append(
         h('div', { class: 'card' },
           h('p', null, t('listen.intro', { n: pool.length })),
-          h('div', { class: 'field' }, h('span', { class: 'lbl' }, t('listen.audio')),
-            seg([['voice', t('listen.voice')], ['original', t('listen.original')]], g.audio, async (v) => { state.settings = await Store.setSettings({ game: { audio: v } }); render(); }, 'data-audio')),
           h('div', { class: 'field' }, h('span', { class: 'lbl' }, t('listen.howMany')),
             seg([[5, '5'], [10, '10'], [20, '20']], g.listenCount, async (v) => { state.settings = await Store.setSettings({ game: { listenCount: Number(v) } }); render(); }, 'data-n')),
           h('div', { class: 'row' }, h('button', { class: 'btn big', type: 'button', onclick: startListen }, t('prac.start'))))
@@ -862,7 +888,7 @@ body.has-dock main { padding-bottom: 16rem; }
           h('p', null, ratio >= 0.8 ? t('prac.great') : ratio >= 0.5 ? t('prac.good') : t('prac.keep')),
           h('div', { class: 'row', style: 'justify-content:center' },
             h('button', { class: 'btn big', type: 'button', onclick: startListen }, t('prac.again')),
-            h('button', { class: 'btn secondary', type: 'button', onclick: () => { lgame = null; closeDock(); render(); } }, t('common.back'))))
+            h('button', { class: 'btn secondary', type: 'button', onclick: () => { lgame = null; A.stopSpeaking(); render(); } }, t('common.back'))))
       );
       return box;
     }
@@ -886,7 +912,7 @@ body.has-dock main { padding-bottom: 16rem; }
     } else {
       const fb = h('div', { class: 'card' },
         h('p', { class: 'de', lang: learn(), dir: dirOf(learn()) }, s.text),
-        s.translation ? h('p', { class: 'tr', lang: s.lang, dir: dirOf(s.lang) }, s.translation) : null,
+        h('p', { class: 'tr', lang: state.settings.lang, dir: dirOf(state.settings.lang) }, sentenceTranslation(s)),
         h('div', { class: 'row' },
           h('button', { class: 'btn secondary small', type: 'button', onclick: () => playSentence(s) }, t('listen.replay'))),
         h('div', { class: 'row' },
@@ -896,13 +922,12 @@ body.has-dock main { padding-bottom: 16rem; }
       box.append(fb);
       requestAnimationFrame(() => fb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     }
-    box.append(h('div', { class: 'row' }, h('button', { class: 'btn secondary small', type: 'button', onclick: () => { lgame = null; closeDock(); A.stopSpeaking(); render(); } }, t('prac.stop'))));
+    box.append(h('div', { class: 'row' }, h('button', { class: 'btn secondary small', type: 'button', onclick: () => { lgame = null; A.stopSpeaking(); render(); } }, t('prac.stop'))));
     return box;
   }
 
   function playSentence(s) {
-    if (state.settings.game.audio === 'original') playOriginal(s);
-    else playVoice(s);
+    playVoice(s);
   }
   function startListen() {
     const g = state.settings.game;
@@ -912,7 +937,7 @@ body.has-dock main { padding-bottom: 16rem; }
   function nextListen() {
     if (!lgame) return;
     const pool = GG.listenPool(state.sentences, learn());
-    if (!pool.length) { lgame = null; closeDock(); return render(); }
+    if (!pool.length) { lgame = null; A.stopSpeaking(); return render(); }
     const s = GG.pickSentence(pool, Math.random, lgame.lastId);
     lgame.cur = s;
     lgame.lastId = s.id;
@@ -936,7 +961,7 @@ body.has-dock main { padding-bottom: 16rem; }
     await Store.updateSentence(s.id, ok ? { got: (s.got || 0) + 1 } : { missed: (s.missed || 0) + 1 });
     state.sentences = await Store.listSentences();
     if (!lgame) return; // the game was stopped meanwhile
-    if (lgame.asked >= lgame.total) { lgame.finished = true; closeDock(); A.stopSpeaking(); render(false); } else nextListen();
+    if (lgame.asked >= lgame.total) { lgame.finished = true; A.stopSpeaking(); render(false); } else nextListen();
   }
 
   // the language being learned changed: everything on this page is about the other language now
@@ -944,7 +969,6 @@ body.has-dock main { padding-bottom: 16rem; }
     game = null;
     lgame = null;
     state.open = null;
-    closeDock();
     A.stopSpeaking();
     applyLangChrome();
     renderTabs();
@@ -1165,48 +1189,20 @@ body.has-dock main { padding-bottom: 16rem; }
 --- END: app.js ---
 
 --- FILE: audio.js ---
-// Playing a saved sentence: the original audio (an embedded YouTube clip) or the computer voice.
-// No page code in here that needs the library page, so it can be tested on its own.
+// Computer voice playback for saved sentences.
+// Uses the browser's built-in Speech Synthesis API.
 globalThis.GSTAudio = (() => {
-  const LEAD = 0.3; // start a little before the sentence, like the s / a / d keys do
   const base = (c) => {
     c = String(c || '').toLowerCase().split(/[-_]/)[0];
     return { iw: 'he', in: 'id', nb: 'no', nn: 'no' }[c] || c;
   };
-  const wordCount = (t) => (String(t).match(/\S+/g) || []).length;
-
-  // ---- the original audio ----
-  // when the sentence ends: the saved end time, or (for sentences saved before end times existed) a guess from its length
-  function estimateEnd(s) {
-    const start = Number(s.time) || 0;
-    if (typeof s.end === 'number' && s.end > start) return s.end;
-    const text = String(s.text || '');
-    const noSpaces = /[぀-ヿ㐀-鿿฀-๿]/.test(text);
-    const seconds = noSpaces ? [...text].length * 0.25 : wordCount(text) * 0.42;
-    return start + Math.max(2, seconds + 0.8);
-  }
-  // YouTube only takes whole seconds, so the clip starts up to a second early and ends up to a second late
-  function clip(s) {
-    const start = Math.max(0, Math.floor((Number(s.time) || 0) - LEAD));
-    const end = Math.max(start + 1, Math.ceil(estimateEnd(s) + 0.3));
-    return { start, end };
-  }
-  function embedUrl(s) {
-    if (!s || !s.videoId) return null;
-    const c = clip(s);
-    return (
-      `https://www.youtube.com/embed/${encodeURIComponent(s.videoId)}` +
-      `?start=${c.start}&end=${c.end}&autoplay=1&rel=0&playsinline=1&modestbranding=1`
-    );
-  }
-
-  // ---- the computer voice ----
   const synth = () => (typeof speechSynthesis !== 'undefined' ? speechSynthesis : null);
   const voices = () => {
     const sy = synth();
     try { return (sy && sy.getVoices && sy.getVoices()) || []; } catch { return []; }
   };
-  // a voice for this language: null when voices are known but none fits, undefined when the list is not loaded yet
+  // A voice for this language: null when voices are known but none fits,
+  // undefined when the browser has not loaded its voice list yet.
   function findVoice(lang) {
     const all = voices();
     if (!all.length) return undefined;
@@ -1221,7 +1217,7 @@ globalThis.GSTAudio = (() => {
   function canSpeak() {
     return !!synth() && typeof SpeechSynthesisUtterance !== 'undefined';
   }
-  // speaks `text`; returns {ok} or {ok:false, reason:'unsupported'|'no-voice'}
+  // Speaks text; returns {ok} or {ok:false, reason:'unsupported'|'no-voice'}.
   function speak(text, lang, opts = {}) {
     const sy = synth();
     if (!canSpeak()) return { ok: false, reason: 'unsupported' };
@@ -1240,7 +1236,7 @@ globalThis.GSTAudio = (() => {
     try { const sy = synth(); if (sy) sy.cancel(); } catch {}
   }
 
-  return { LEAD, estimateEnd, clip, embedUrl, canSpeak, findVoice, speak, stopSpeaking, speechLang };
+  return { canSpeak, findVoice, speak, stopSpeaking, speechLang };
 })();
 --- END: audio.js ---
 
@@ -1446,8 +1442,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   #gst-toast.warn{background:#b45309}
   #gst-overlay .gst-gear{position:absolute;top:-12px;right:-12px;width:28px;height:28px;padding:0;border-radius:50%;
     border:2px solid rgba(255,255,255,.85);background:rgba(24,24,24,.96);color:#fff;font:16px/1 Roboto,Arial,sans-serif;
-    cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.8;touch-action:manipulation}
-  #gst-overlay .gst-gear:hover,#gst-overlay .gst-gear:focus-visible{opacity:1;background:#1557b0}
+    cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;touch-action:manipulation}
+  #gst-overlay:hover .gst-gear,#gst-overlay:focus-within .gst-gear,
+  #gst-overlay .gst-gear:hover,#gst-overlay .gst-gear:focus-visible{opacity:1;pointer-events:auto;background:#1557b0}
+  @media (hover:none){#gst-overlay .gst-gear{opacity:.9;pointer-events:auto}}
   #gst-menu[dir="rtl"],#gst-word[dir="rtl"]{direction:rtl;text-align:right}`;
 
   const FAILED = '\u0001failed'; // marks a translation that did not work
@@ -2595,16 +2593,10 @@ globalThis.GSTI18n = (() => {
     'set.resetDone': 'Settings reset',
 
     // ---- audio and the listening game ----
-    'audio.play': '▶ Original',
-    'audio.playTitle': 'Play this moment from the video',
     'audio.voice': '🔊 Voice',
     'audio.voiceTitle': 'Hear a computer voice read the sentence',
-    'audio.stop': '■ Stop',
-    'audio.noVoice': 'This computer has no {learn} voice. Use the original sound instead.',
-    'audio.noSpeech': 'This browser cannot read text aloud. Use the original sound instead.',
-    'audio.noVideo': 'This sentence has no video link.',
-    'audio.hint': 'If the picture stays black, the owner of the video may not allow it to play here. Use the computer voice instead.',
-    'audio.playerAria': 'The video moment',
+    'audio.noVoice': 'No {learn} computer voice is installed on this device.',
+    'audio.noSpeech': 'This browser cannot read text aloud.',
     'prac.modeAria': 'Which game?',
     'prac.modeWords': '🔤 Word game',
     'prac.modeListen': '🎧 Listening game',
@@ -2612,9 +2604,6 @@ globalThis.GSTI18n = (() => {
     'listen.needTitle': 'You need at least 1 saved sentence',
     'listen.needText': 'While watching a {learn} video, press {key} to save a sentence. Then come back here.',
     'listen.intro': 'You hear a sentence. Try to understand it, then press “Show” to check. You have {n} sentences. The ones you missed come back more often.',
-    'listen.audio': 'Which sound do you want?',
-    'listen.voice': '🔊 Computer voice',
-    'listen.original': '🎬 Original from the video',
     'listen.howMany': 'How many sentences?',
     'listen.q': 'Sentence {n} of {total}',
     'listen.question': 'Listen. What is being said?',
@@ -2732,9 +2721,9 @@ globalThis.GSTI18n = (() => {
 --- FILE: manifest.json ---
 {
   "manifest_version": 3,
-  "name": "Language Sentence Trainer",
-  "version": "1.4.0",
-  "description": "Learn a language from YouTube: shows each sentence with a translation in your language. Keys: c = show/hide, s = repeat, d = next, a = previous, w = save the sentence. Click a word to save it. Listen again to saved sentences, play word and listening games.",
+  "name": "Learn languages - youtube dual captions and sentense capture",
+  "version": "1.4.1",
+  "description": "This extension allows you to learn languages by watching YouTube videos with dual captions and capturing sentences for practice.",
   "permissions": [
     "storage"
   ],
@@ -3079,7 +3068,7 @@ globalThis.GSTStore = (() => {
     tr: { size: 100, color: '#ffd54f' }, // translation line on the video
     pos: null, // where the captions sit on the video: {x, y} = centre as a share of the video size; null = default place
     uiScale: 1, // text size of the library page
-    game: { direction: 'mixed', count: 10, audio: 'voice', listenCount: 10 }, // audio: 'voice' (computer) or 'original' (the video)
+    game: { direction: 'mixed', count: 10, listenCount: 10 }, // listening practice always uses the computer voice
   };
 
   // [Google Translate code, name in its own language, English name]

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Language Sentence Trainer",
-  "version": "1.4.0",
-  "description": "Learn a language from YouTube: shows each sentence with a translation in your language. Keys: c = show/hide, s = repeat, d = next, a = previous, w = save the sentence. Click a word to save it. Listen again to saved sentences, play word and listening games.",
+  "name": "Learn languages - youtube dual captions and sentense capture",
+  "version": "1.4.1",
+  "description": "This extension allows you to learn languages by watching YouTube videos with dual captions and capturing sentences for practice.",
   "permissions": [
     "storage"
   ],
