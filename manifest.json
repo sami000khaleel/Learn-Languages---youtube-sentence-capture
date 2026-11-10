@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Language Sentence Trainer",
+  "version": "1.4.0",
+  "description": "Learn a language from YouTube: shows each sentence with a translation in your language. Keys: c = show/hide, s = repeat, d = next, a = previous, w = save the sentence. Click a word to save it. Listen again to saved sentences, play word and listening games.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://translate.googleapis.com/*"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "Open my library",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png"
+    }
+  },
+  "options_ui": {
+    "page": "app.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "hook.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "sentences.js",
+        "store.js",
+        "i18n.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
